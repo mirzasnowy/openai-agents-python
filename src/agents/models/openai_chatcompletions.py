@@ -45,7 +45,6 @@ from .chatcmpl_helpers import HEADERS, HEADERS_OVERRIDE, ChatCmplHelpers
 from .chatcmpl_stream_handler import ChatCmplStreamHandler
 from .fake_id import FAKE_RESPONSES_ID
 from .interface import Model, ModelTracing
-from .openai_responses import Converter as OpenAIResponsesConverter
 from .reasoning_content_replay import ShouldReplayReasoningContent
 
 if TYPE_CHECKING:
@@ -753,7 +752,7 @@ class OpenAIChatCompletionsModel(Model):
         if isinstance(ret, ChatCompletion):
             return ret
 
-        responses_tool_choice = OpenAIResponsesConverter.convert_tool_choice(
+        responses_tool_choice = Converter.convert_tool_choice_for_response(
             model_settings.tool_choice
         )
         if responses_tool_choice is None or responses_tool_choice is omit:

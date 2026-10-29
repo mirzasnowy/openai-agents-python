@@ -40,6 +40,7 @@ from openai.types.responses import (
     ResponseOutputText,
     ResponseReasoningItem,
     ResponseReasoningItemParam,
+    response_create_params,
 )
 from openai.types.responses.response_input_param import FunctionCallOutput, ItemReference, Message
 from openai.types.responses.response_output_text import (
@@ -101,6 +102,38 @@ class Converter:
                 "function": {
                     "name": tool_choice,
                 },
+            }
+
+    @classmethod
+    def convert_tool_choice_for_response(
+        cls, tool_choice: Literal["auto", "required", "none"] | str | MCPToolChoice | None
+    ) -> response_create_params.ToolChoice | Omit:
+        """Convert a Chat Completions tool choice into a valid Response tool choice.
+
+        Chat Completions models treat every string tool choice as a function name,
+        so names that collide with Responses hosted tools (such as "web_search" or
+        "mcp") must keep the function form instead of the hosted-tool form the
+        Responses converter would produce. Streamed Chat Completions placeholders
+        are Response objects, so they must use this conversion.
+        """
+        if tool_choice is None:
+            return omit
+        elif isinstance(tool_choice, MCPToolChoice):
+            return {
+                "server_label": tool_choice.server_label,
+                "type": "mcp",
+                "name": tool_choice.name,
+            }
+        elif tool_choice == "auto":
+            return "auto"
+        elif tool_choice == "required":
+            return "required"
+        elif tool_choice == "none":
+            return "none"
+        else:
+            return {
+                "type": "function",
+                "name": tool_choice,
             }
 
     @classmethod

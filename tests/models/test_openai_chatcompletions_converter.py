@@ -49,6 +49,7 @@ from openai.types.responses.response_input_item_param import FunctionCallOutput
 from agents.agent_output import AgentOutputSchema
 from agents.exceptions import AgentsException, UserError
 from agents.items import TResponseInputItem
+from agents.model_settings import MCPToolChoice
 from agents.models.chatcmpl_converter import Converter
 from agents.models.fake_id import FAKE_RESPONSES_ID
 
@@ -566,6 +567,46 @@ def test_convert_tool_choice_allows_tool_search_as_named_function_for_chat_model
     assert isinstance(tool_choice_dict, dict)
     assert tool_choice_dict["type"] == "function"
     assert tool_choice_dict["function"]["name"] == "tool_search"
+
+
+def test_convert_tool_choice_for_response_keeps_hosted_tool_names_as_functions() -> None:
+    """
+    Streamed Chat Completions placeholders are Response objects, but Chat Completions
+    models treat every string tool choice as a function name. Names that collide with
+    Responses hosted tools must therefore keep the function form, otherwise the
+    placeholder Response fails validation (see #5447).
+    """
+    for tool_choice in (
+        "web_search",
+        "mcp",
+        "file_search",
+        "web_search_preview",
+        "image_generation",
+        "code_interpreter",
+    ):
+        converted = Converter.convert_tool_choice_for_response(tool_choice)
+        assert isinstance(converted, dict)
+        assert converted["type"] == "function"
+        assert converted["name"] == tool_choice
+
+
+def test_convert_tool_choice_for_response_handles_standard_options() -> None:
+    """
+    The Response form of a Chat Completions tool choice should return the omit
+    sentinel when no choice is provided, pass through "auto", "required", and
+    "none" unchanged, and keep the MCP server label and name for MCP choices.
+    """
+    assert Converter.convert_tool_choice_for_response(None) is omit
+    assert Converter.convert_tool_choice_for_response("auto") == "auto"
+    assert Converter.convert_tool_choice_for_response("required") == "required"
+    assert Converter.convert_tool_choice_for_response("none") == "none"
+    converted = Converter.convert_tool_choice_for_response(
+        MCPToolChoice(server_label="my_server", name="my_tool")
+    )
+    assert isinstance(converted, dict)
+    assert converted["type"] == "mcp"
+    assert converted["server_label"] == "my_server"
+    assert converted["name"] == "my_tool"
 
 
 def test_convert_response_format_returns_not_given_for_plain_text_and_dict_for_schemas() -> None:

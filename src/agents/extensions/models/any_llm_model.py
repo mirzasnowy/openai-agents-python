@@ -972,7 +972,7 @@ class AnyLLMModel(Model):
                 )
             return normalized_response
 
-        responses_tool_choice = OpenAIResponsesConverter.convert_tool_choice(
+        responses_tool_choice = Converter.convert_tool_choice_for_response(
             model_settings.tool_choice
         )
         if responses_tool_choice is None or responses_tool_choice is omit:

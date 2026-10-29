@@ -350,6 +350,84 @@ async def test_stream_response_yields_events_for_text_content(monkeypatch) -> No
 
 @pytest.mark.allow_call_model_methods
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_choice", ["web_search", "mcp"])
+async def test_stream_response_builds_function_placeholder_for_hosted_tool_names(
+    tool_choice: str,
+) -> None:
+    """
+    Streamed Chat Completions runs must not fail validation when the requested
+    tool choice names a function tool that collides with a Responses hosted tool
+    (see #5447). This test uses a specialized client double because it exercises
+    the provider-wire placeholder Response construction, which the scripted model
+    utilities cannot preserve.
+    """
+    chunk1 = ChatCompletionChunk(
+        id="chunk-id",
+        created=1,
+        model="fake",
+        object="chat.completion.chunk",
+        choices=[Choice(index=0, delta=ChoiceDelta(content="He"))],
+    )
+    chunk2 = ChatCompletionChunk(
+        id="chunk-id",
+        created=1,
+        model="fake",
+        object="chat.completion.chunk",
+        choices=[Choice(index=0, delta=ChoiceDelta(content="llo"))],
+        usage=CompletionUsage(
+            completion_tokens=5,
+            prompt_tokens=7,
+            total_tokens=12,
+            prompt_tokens_details=PromptTokensDetails.model_validate(
+                {"cached_tokens": 2, "cache_write_tokens": 4}
+            ),
+            completion_tokens_details=CompletionTokensDetails(reasoning_tokens=3),
+        ),
+    )
+
+    async def fake_stream() -> AsyncIterator[ChatCompletionChunk]:
+        yield chunk1
+        yield chunk2
+        yield _chunk_with([Choice(index=0, delta=ChoiceDelta(), finish_reason="stop")])
+
+    class DummyCompletions:
+        async def create(self, **kwargs: Any) -> Any:
+            return fake_stream()
+
+    class DummyClient:
+        def __init__(self) -> None:
+            self.chat = type("_Chat", (), {"completions": DummyCompletions()})()
+            self.base_url = httpx2.URL("https://custom.example.test/v1/")
+
+    model = OpenAIChatCompletionsModel(
+        model="fake",
+        openai_client=DummyClient(),  # type: ignore[arg-type]
+    )
+    output_events = []
+    async for event in model.stream_response(
+        system_instructions=None,
+        input="",
+        model_settings=ModelSettings(tool_choice=tool_choice),
+        tools=[],
+        output_schema=None,
+        handoffs=[],
+        tracing=ModelTracing.DISABLED,
+        previous_response_id=None,
+        conversation_id=None,
+        prompt=None,
+    ):
+        output_events.append(event)
+
+    assert output_events[0].type == "response.created"
+    created_tool_choice = output_events[0].response.tool_choice
+    assert created_tool_choice is not None
+    assert created_tool_choice.type == "function"
+    assert created_tool_choice.name == tool_choice
+    assert output_events[-1].type == "response.completed"
+
+
+@pytest.mark.allow_call_model_methods
+@pytest.mark.asyncio
 async def test_stream_response_close_closes_provider_stream_with_async_close(
     monkeypatch,
 ) -> None:

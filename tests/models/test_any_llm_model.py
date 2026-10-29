@@ -1148,6 +1148,76 @@ async def test_any_llm_stream_uses_chat_handler_when_responses_are_unsupported(m
 
 @pytest.mark.allow_call_model_methods
 @pytest.mark.asyncio
+@pytest.mark.parametrize("tool_choice", ["web_search", "mcp"])
+async def test_any_llm_chat_stream_builds_function_placeholder_for_hosted_tool_names(
+    monkeypatch, tool_choice: str
+) -> None:
+    """
+    Streamed any-llm Chat Completions runs must not fail validation when the
+    requested tool choice names a function tool that collides with a Responses
+    hosted tool (see #5447). The fake provider stands in for the any-llm client
+    so the real placeholder Response construction runs.
+    """
+
+    async def fake_stream() -> AsyncIterator[ChatCompletionChunk]:
+        yield ChatCompletionChunk(
+            id="chunk-id",
+            created=1,
+            model="fake",
+            object="chat.completion.chunk",
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content="He"))],
+        )
+        yield ChatCompletionChunk(
+            id="chunk-id",
+            created=1,
+            model="fake",
+            object="chat.completion.chunk",
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(content="llo"))],
+            usage=CompletionUsage(
+                completion_tokens=5,
+                prompt_tokens=7,
+                total_tokens=12,
+                completion_tokens_details=CompletionTokensDetails(reasoning_tokens=2),
+                prompt_tokens_details=PromptTokensDetails(cached_tokens=6),
+            ),
+        )
+        yield ChatCompletionChunk(
+            id="chunk-id",
+            created=1,
+            model="fake",
+            object="chat.completion.chunk",
+            choices=[ChunkChoice(index=0, delta=ChoiceDelta(), finish_reason="stop")],
+        )
+
+    provider = FakeAnyLLMProvider(supports_responses=False, chat_response=fake_stream())
+    module, _create_calls = _import_any_llm_module(monkeypatch, provider)
+    model = module.AnyLLMModel(model="openrouter/openai/gpt-5.4-mini")
+    events = [
+        event
+        async for event in model.stream_response(
+            system_instructions=None,
+            input="hi",
+            model_settings=ModelSettings(tool_choice=tool_choice),
+            tools=[],
+            output_schema=None,
+            handoffs=[],
+            tracing=ModelTracing.DISABLED,
+            previous_response_id=None,
+            conversation_id=None,
+            prompt=None,
+        )
+    ]
+
+    assert events[0].type == "response.created"
+    created_tool_choice = events[0].response.tool_choice
+    assert created_tool_choice is not None
+    assert created_tool_choice.type == "function"
+    assert created_tool_choice.name == tool_choice
+    assert events[-1].type == "response.completed"
+
+
+@pytest.mark.allow_call_model_methods
+@pytest.mark.asyncio
 async def test_any_llm_stream_passthrough_uses_responses_when_supported(monkeypatch) -> None:
     async def response_stream() -> AsyncIterator[ResponseCompletedEvent]:
         yield ResponseCompletedEvent(
